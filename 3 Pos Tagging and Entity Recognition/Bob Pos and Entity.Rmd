@@ -1,0 +1,195 @@
+---
+title: "POS tagging and Entity Recognition"
+output: html_notebook
+---
+
+```{r}
+library(spacyr)
+spacy_install()
+
+```
+
+```{r}
+spacy_initialize()
+```
+
+```{r setup}
+library(rJava)
+library(openNLP)
+library(quanteda)
+library(spacyr)
+library(cleanNLP)
+library(dplyr)
+library(tidytext)
+library(tidyr)
+library(tidyverse)
+library(knitr)
+library(magrittr)
+library(gridExtra)
+library(tm)
+library(formattable)
+library(widyr)
+library(textdata)
+library(viridis)
+library(ggrepel)
+library(circlize) 
+library(memery)
+library(magick)
+library(yarrr) 
+library(radarchart) 
+library(igraph) 
+library(ggraph)
+library(wordcloud2)
+library (ggplot2)
+library(kableExtra)
+
+setwd("C:/Users/lavin/Desktop/Bob Dylan Project/BobDylan")
+
+
+bob <- read.csv("BobDylanDataset.csv", header = TRUE, sep= ";", stringsAsFactors = FALSE)
+
+
+## DATA CLEANING
+fix.contractions <- function(doc) {
+  doc <- gsub("won't", "will not", doc)
+  doc <- gsub("can't", "can not", doc)
+  doc <- gsub("n't", " not", doc)
+  doc <- gsub("'ll", " will", doc)
+  doc <- gsub("'re", " are", doc)
+  doc <- gsub("'ve", " have", doc)
+  doc <- gsub("'m", " am", doc)
+  doc <- gsub("'d", " would", doc)
+  # 's could be 'is' or could be possessive: it has no expansion
+  doc <- gsub("'s", "", doc)
+  return(doc)
+}
+# fix (expand) contractions
+bob$lyric <- sapply(bob$lyric, fix.contractions)
+
+
+#create buckets and group the years into decades
+bob <- bob %>%
+  mutate(decade = 
+           ifelse(bob$year %in% 1962:1969, "1960s", 
+                  ifelse(bob$year %in% 1970:1979, "1970s", 
+                         ifelse(bob$year %in% 1980:1989, "1980s", 
+                                ifelse(bob$year %in% 1990:1999, "1990s", 
+                                       ifelse(bob$year %in% 2000:2009, "2000s",
+                                              ifelse(bob$year %in% 2010:2017, "2010s",
+                                                     "NA")))))))
+#REMOVE INSTRUMENTAL SONGS 
+#bob$lyric=="instrumental"
+bob <- bob[!(bob$lyric=="instrumental"),]
+
+```
+
+```{r Parsing, echo=TRUE}
+lyric_parsed <- spacy_parse(bob$lyric, pos=TRUE, tag = TRUE, lemma = TRUE, entity = TRUE, dependency = TRUE, nounphrase = TRUE )
+#Removing spaces
+lyric_parsed <- lyric_parsed[!(lyric_parsed$whitespace=="FALSE"),]
+lyric_parsed
+```
+
+```{r Nouns}
+bob_nouns <-lyric_parsed %>%
+  unnest_tokens(word, token) %>%
+  filter(pos == "NOUN")
+head(bob_nouns)
+
+```
+
+```{r}
+bob_nouns %>%
+  count(word, sort = TRUE) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot() +
+  geom_col(aes(word, n), fill = viridis(10, alpha = 0.8)) +
+  theme(legend.position = "none", 
+        plot.title = element_text(hjust = 0.5),
+        panel.grid.major = element_blank()) +
+  xlab("") + 
+  ylab("Song Count") +
+  ggtitle("Most Frequently Used nouns in Bob Dylan Lyrics") +
+  coord_flip()
+```
+
+```{r}
+# WORD CLOUD
+bob_nouns_counts <- bob_nouns %>%
+  count(word, sort = TRUE) 
+
+wordcloud2(bob_nouns_counts[1:400, ], size = .5)
+```
+
+```{r Verbs}
+bob_verbs <-lyric_parsed %>%
+  unnest_tokens(word, token) %>%
+  filter(pos == "VERB")
+head(bob_verbs)
+```
+
+```{r}
+bob_verbs %>%
+  count(word, sort = TRUE) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot() +
+  geom_col(aes(word, n), fill = viridis(10, alpha = 0.8)) +
+  theme(legend.position = "none", 
+        plot.title = element_text(hjust = 0.5),
+        panel.grid.major = element_blank()) +
+  xlab("") + 
+  ylab("Song Count") +
+  ggtitle("Most Frequently Used verbs in Bob Dylan Lyrics") +
+  coord_flip()
+```
+
+```{r}
+bob_verbs_counts <- bob_verbs %>%
+  count(word, sort = TRUE) 
+
+wordcloud2(bob_verbs_counts[1:700, size = 0.6])
+```
+
+```{r Extracting Entities}
+entities <- spacy_extract_entity(bob$lyric)
+entities
+```
+
+```{r Extract entity locations}
+bob_locations <- entities %>%
+  filter(ent_type == "GPE" )
+# deleting what are defenitely not locations ina Brute way, need to adjust 
+bob_locations <- bob_locations[!(bob_locations$text== "knockin" |bob_locations$text== "santa"| bob_locations$text== "santa claus"| 
+                                 bob_locations$text== "wanta" |bob_locations$text== "santa clause"),]
+bob_locations
+```
+
+```{r}
+bob_locations %>%
+  count(text, sort = TRUE) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(text = reorder(text, n)) %>%
+  ggplot() +
+  geom_col(aes(text, n), fill = viridis(12, alpha = 0.8)) +
+  theme(legend.position = "none", 
+        plot.title = element_text(hjust = 0.5),
+        panel.grid.major = element_blank()) +
+  xlab("") + 
+  ylab("Song Count") +
+  ggtitle("Most Frequent locations in Bob Dylan Lyrics") +
+  coord_flip()
+```
+
+```{r}
+bob_loc_counts <- bob_locations%>%
+  count(text, sort = TRUE) 
+
+
+wordcloud2(bob_loc_counts[1:130, size = 0.5])
+```
+

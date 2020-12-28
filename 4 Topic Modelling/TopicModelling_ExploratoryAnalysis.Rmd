@@ -1,0 +1,369 @@
+---
+title: "Text analytics & topic modelling on song lyrics"
+author: ''
+description: Text analytics & topic modelling in more than 380,000 song lyrics, of
+  various music genres in the past 50 years
+slug: text-analytics-topic-modelling-songs-lyrics
+tags:
+- Text analytics
+- Tidytext
+- LDA
+- Topic modelling
+categories: R
+---
+
+The main objective is to **develop clusters of decades/albums by the song lyrics** 
+and the steps are the following:
+
+* Data preparation (cleansing, transform etc.)
+* Exploratory analysis  
+* Topic modelling
+
+Various R libraries were used, but it is mainly based on [#tidytext](https://twitter.com/hashtag/tidytext?src=hash) 
+and [#tidyverse](https://twitter.com/hashtag/tidyverse?src=hash) environment.
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+# Libraries
+library(readr)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(lubridate)
+library(wordcloud)
+library(topicmodels)
+library(tm)
+library(stopwords)
+library(quanteda)
+library(ggthemes)
+library(cld3)
+```
+
+Data preparation was a very important part of the analysis. 
+- detecting english by using the **cld3** library, the
+origin of the songs was detected & added to the dataset. The language detection wasn't perfect, as it 
+misclassified a few songs. Almost all songs were correctly detected except for a couple of NA results and the "lala -lyric" song already identified in previous analysis as completely nonesense was assigned "ja" so I decided to remove it. The NA results were actually english, thus I kept them for the analysis. 
+
+```{r}
+setwd("C:/Users/lavin/Desktop/Bob Dylan Project/Bob Workflow")
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+# Insert data
+bob <- read.csv("BobDylanDataset.csv", header = TRUE, sep= ";", stringsAsFactors = FALSE)
+```
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+# DATA CLEANSING
+## Filter data, handle missing values
+# fix contractions
+fix.contractions <- function(doc) {
+  doc <- gsub("won't", "will not", doc)
+  doc <- gsub("can't", "can not", doc)
+  doc <- gsub("n't", " not", doc)
+  doc <- gsub("'ll", " will", doc)
+  doc <- gsub("'re", " are", doc)
+  doc <- gsub("'ve", " have", doc)
+  doc <- gsub("'m", " am", doc)
+  doc <- gsub("'d", " would", doc)
+  # 's could be 'is' or could be possessive: it has no expansion
+  doc <- gsub("'s", "", doc)
+  return(doc)
+}
+# fix (expand) contractions
+bob$lyric <- sapply(bob$lyric, fix.contractions)
+# function to remove special characters, if any
+removeSpecialChars <- function(x) gsub("[^a-zA-Z0-9 ]", " ", x)
+# remove special characters
+bob$lyric <- sapply(bob$lyric, removeSpecialChars)
+# convert everything to lower case
+bob$lyric <- sapply(bob$lyric, tolower)
+
+#create buckets and group the years into decades
+bob <- bob %>%
+  mutate(decade = 
+           ifelse(bob$year %in% 1962:1969, "1960s", 
+                  ifelse(bob$year %in% 1970:1979, "1970s", 
+                         ifelse(bob$year %in% 1980:1989, "1980s", 
+                                ifelse(bob$year %in% 1990:1999, "1990s", 
+                                       ifelse(bob$year %in% 2000:2009, "2000s",
+                                              ifelse(bob$year %in% 2010:2017, "2010s",
+                                                     "NA")))))))
+#REMOVE INSTRUMENTAL SONGS 
+bob <- bob[!(bob$lyric=="instrumental"),]
+
+# Detect the language of the song
+library(cld3)
+bob$lang <- detect_language(bob$lyric)
+# Filter the songs that 
+bob_lan <- 
+  bob %>%
+  filter(lang == "en" | lang== NA )
+  
+bob$characters <- str_count(bob$lyric)
+```
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+## _text cleaning
+# Create a vector with stopwords
+stopwords <- c(stopwords())
+  
+# Clean text
+bob$lyric <- tolower(bob$lyric)
+bob$lyric <- removePunctuation(bob$lyric)
+bob$lyric <- removeNumbers(bob$lyric)
+bob$lyric <- stripWhitespace(bob$lyric)
+bob$lyric <- removeWords(bob$lyric, stopwords)
+bob$lyric <- stemDocument(bob$lyric)
+# Save processed data for future use
+saveRDS(bob, file = "cleaned_bob.RDS")
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+## _Insert processed dataset
+songs <- readRDS(file = "cleaned_bob.RDS")
+```
+
+# MAIN ANALYSIS
+
+Below there is a statistical table and a frequency plot to indicate the 
+differences between the decades. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# library(DT)
+# 
+# knit_print.data.frame = function(x, ...) {
+#   knit_print(DT::datatable(x), ...)
+# }
+songs_data <- 
+songs %>% 
+  group_by(decade) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(`Proportion(%)` = round((n/sum(n))*100, 2)) %>% 
+  arrange(-n) %>% 
+  rename(Decade = decade,
+         `Total songs` = n) 
+knitr::kable(songs_data, caption = "Songs per decade")
+#knit_print.data.frame()
+```
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+songs %>% 
+  group_by(decade) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(Freq = n/sum(n)) %>% 
+  arrange(-Freq) %>% 
+  ggplot() +
+  geom_col(aes(reorder(decade, -Freq), Freq), fill = "steelblue", alpha = 0.7) +
+  labs(y = "Number of songs", x = "Decade", 
+       title = "Proportion of songs per Decade", 
+       subtitle = "Bob Dylan Song Collection")+
+  theme_fivethirtyeight() +
+  scale_y_continuous(labels = scales::percent_format()) 
+  
+```
+From the table is clear how the 60s and 70s account for more than 50% of all Bob Dylan Songs. 
+
+
+Below, differences between albums for clarity sake 
+
+```{r echo=TRUE}
+album_data <- 
+songs %>% 
+  group_by(album) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(`Proportion(%)` = round((n/sum(n))*100, 2)) %>% 
+  arrange(-n) %>% 
+  rename(Album = album,
+         `Total songs` = n) 
+knitr::kable(album_data, caption = "Songs per Album")
+```
+
+
+```{r echo=TRUE}
+songs %>% 
+  group_by(album) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(Freq = n/sum(n)) %>% 
+  arrange(-Freq) %>% 
+  ggplot() +
+  geom_col(aes(reorder(album, -Freq), Freq), fill = "steelblue", alpha = 0.7) +
+  labs(y = "Number of songs", x = "Album", 
+       title = "Proportion of songs per Album", 
+       subtitle = "Bob Dylan Song COllection")+
+  theme_fivethirtyeight() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))+
+  scale_y_continuous(labels = scales::percent_format()) 
+```
+Albums such as Triplicate, The Basement Tapes and Self Portrait account for the majority of total songs proportion. Their tracklist is simply longer. 
+
+
+
+Now let's try to figure out which music genre uses more lyrics.
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+## number of characters per song
+songs %>% 
+  ggplot() +
+  geom_boxplot(aes(decade, characters), fill = "steelblue", alpha = 0.7) +
+  labs(y = "Length of song lyrics (in characters)", x = "Music Genre", 
+       title = "Length (in characters) of song lyrics per decade", 
+       subtitle = "From 1970 to 2016")+
+  theme_fivethirtyeight() +
+  ylim(0, 10000)
+
+songs %>% 
+  group_by(decade) %>% 
+  summarise(characters = round(mean(characters, na.rm = TRUE), 0)) %>% 
+  ggplot(aes(reorder(decade, -characters), characters)) +
+  geom_col(fill = "steelblue", alpha = 0.7) +
+  labs(y = "Length of song lyrics (in characters)", x = "Music Genre", 
+       title = "Average lyrics characters per decade", 
+       subtitle = "From 1970 to 2016")+
+  theme_fivethirtyeight()
+```
+
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+## number of characters per song
+songs %>% 
+  ggplot() +
+  geom_boxplot(aes(album, characters), fill = "steelblue", alpha = 0.7) +
+  labs(y = "Length of song lyrics (in characters)", x = "album", 
+       title = "Length (in characters) of song lyrics per Album", 
+       subtitle = "From 1962 to 2017")+
+  theme_fivethirtyeight() +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1))+
+  ylim(0, 10000)
+
+songs %>% 
+  group_by(album) %>% 
+  summarise(characters = round(mean(characters, na.rm = TRUE), 0)) %>% 
+  ggplot(aes(reorder(album, -characters), characters)) +
+  geom_col(fill = "steelblue", alpha = 0.7) +
+  labs(y = "Length of song lyrics (in characters)", x = "Album", 
+       title = "Average lyrics characters per Album", 
+       subtitle = "From 1970 to 2016")+
+  theme_fivethirtyeight() +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+```
+
+
+# WORDCLOUD
+
+It is interesting to see which are the most used words in each music genre. 
+Below there are word clouds for the top 5 music genres. 
+Word clouds (also known as text clouds or tag clouds) work in a simple way: 
+the more a specific word appears in a source of textual data, the bigger 
+and bolder it appears in the word cloud.  
+Below there are word clouds for decades.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+words <- 
+  songs %>%
+  unnest_tokens(word, lyric) %>% 
+  group_by(decade, word) %>% 
+  count() %>% 
+  arrange(-n) %>% 
+  group_by(decade) %>% 
+  top_n(n = 100, wt = n)
+# Select top 5 genres
+decades <- c("1960s", "1970s", "1980s", "1990s", "2000s", "2010s")
+for(i in 1:length(decades)){
+  temp <- filter(words, decade == decades[i])
+  
+  # Create a word cloud
+  par(bg="grey30")
+  wordcloud(words = temp$word, freq = temp$n, col=terrain.colors(length(temp$word), alpha=0.9), random.order=FALSE, rot.per=0.3 )
+  title(main =  decades[i] , font.main = 1, col.main = "cornsilk3", cex.main = 1.2)
+}
+  
+```
+
+
+
+# TOPIC MODELLING
+
+Want to do is to classify documents into topics or themes. 
+Among other things this would help you figure out if there’s anything interest 
+while also directing you to the relevant subsets of the corpus. For small 
+collections, one could do this by simply going through each document but this 
+is clearly unfeasible for corpuses containing thousands of documents.
+
+**Topic modeling** deals with the problem of automatically
+classifying sets of documents into themes. The algorithm chosen is 
+**Latent Dirichlet Allocation or LDA**, which essentially is a technique that 
+facilitates the automatic discovery of themes in a collection of documents.
+
+The basic assumption behind LDA is that each of the documents in a collection 
+consist of a mixture of collection-wide topics. However, in reality we observe 
+only documents and words, not topics – the latter are part of the hidden (or latent) 
+structure of documents. The aim is to infer the latent topic structure given the
+words and document. LDA does this by recreating the documents in the corpus by
+adjusting the relative importance of topics in documents and words in topics 
+iteratively.
+
+In our case an LDA model with two topics was developed. After computing the topic
+probabilities for all songs, we can see if this unsupervised learning, distinguish 
+or reveal associations between music genres (regarding their lyrics).  
+The box-plot below, reveals the probabilities of each music genre song to belong 
+in each of the three topics.
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# _Build Model ###############################################################
+  
+# split into words
+by_word <- 
+  songs %>% 
+  unnest_tokens(word, lyric)
+# find document-word counts
+word_counts <- 
+  by_word %>%
+  count(ï..song, word, sort = TRUE) %>%
+  ungroup()
+# Create document term matrix
+songs_dtm <- word_counts %>%
+  cast_dtm(ï..song, word, n)
+songs_lda <- LDA(songs_dtm, k = 3, control = list(seed = 1234))
+# Save for future use
+save(songs_lda, file = "Bob_lda_3.RDA")
+``` 
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Load the model
+load(file = "Bob_lda_3.RDA")
+# _Calculate Tables ##########################################################
+library(tidytext)
+  
+ap_topics <- tidy(songs_lda, matrix = "gamma")
+  
+topics_probs <- right_join(ap_topics, songs[, c("ï..song", "decade")], by = c("document" = "ï..song"))
+ 
+topics_probs %>%
+  mutate(decade = reorder(decade, gamma * topic)) %>%
+  ggplot(aes(factor(topic), gamma, colour = factor(topic))) +
+  geom_boxplot(alpha = 0.7) +
+  labs(y = "Probability", x = "Topic", 
+       title = "Topic probabilities per decade", 
+       subtitle = "") +
+  theme_fivethirtyeight() +
+  labs(col="Topics",
+       y = "Probabilities") +
+  facet_wrap(~ decade)
+```
+
